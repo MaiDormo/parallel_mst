@@ -2,7 +2,6 @@
 
 ![MPI](https://img.shields.io/badge/MPI-MPICH%203.2-blue?style=flat-square&logo=mpi)
 ![OpenMP](https://img.shields.io/badge/OpenMP-Enabled-green?style=flat-square&logo=c)
-![Language](https://img.shields.io/badge/Language-C99-00599C?style=flat-square&logo=c)
 ![License](https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square)
 
 A highly optimized, hybrid **MPI + OpenMP** implementation of **Boruvka's Algorithm** for finding the Minimum Spanning Tree (MST) on distributed clusters. Designed for speed, scalability, and memory efficiency.

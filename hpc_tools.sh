@@ -17,7 +17,7 @@ function compile_all() {
     echo "Compiling serial implementation..."
     gcc -O3 "$PROJECT_DIR/serial.c" -o "$PROJECT_DIR/serial.o"
     echo "Compiling parallel implementation..."
-    mpicc -O3 -fopenmp -march=native -mtune=native -ftree-vectorize -funroll-loops -flto -o "$SRC_DIR/main.o" "$SRC_DIR/main.c"
+    mpicc -O3 -fopenmp -march=native -mtune=native -flto -funroll-loops -ftree-vectorize -o "$SRC_DIR/main.o" "$SRC_DIR/main.c"
     echo "Compiling graph generator..."
     gcc -O3 -fopenmp "$PROJECT_DIR/graph_generator.c" -o "$PROJECT_DIR/graph_generator"
     echo "Compilation complete."

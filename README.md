@@ -71,11 +71,9 @@ This project moves beyond standard implementations by addressing hardware-level 
 │   ├── new_main.c                  # Optimized MPI+OpenMP implementation
 │   └── main.c                      # Baseline implementation
 ├── utils/
-│   ├── graph_generator.sh          # Synthetic graph generator
-│   └── plot_results.py             # Visualization tools
-├── scripts/
-│   ├── compare_mpi.sh              # Benchmark implementations
-│   └── submit_job.pbs              # Cluster job script
+│   ├── plot_tools.py               # Visualization tools (example)
+├── hpc_tools.sh                    # Unified script for cluster/remote usage
+├── hpc_tools_local.sh              # Unified script for local usage
 ├── Makefile                        # Build automation
 └── README.md
 
@@ -93,26 +91,44 @@ This project moves beyond standard implementations by addressing hardware-level 
 ### 1. Compile
 
 ```bash
-# Compiles optimized, baseline, and serial versions
-make compile
+
+# For cluster/remote usage:
+./hpc_tools.sh compile
+
+# For local usage:
+./hpc_tools_local.sh compile
 
 ```
 
-*Compiler Flags Used:* `-O3 -fopenmp -march=native -ftree-vectorize -funroll-loops`
+*Compiler Flags Used:* `-O3 -fopenmp -march=native -ftree-vectorize -funroll-loops -std=gnu11`
 
 ### 2. Generate Data
 
 ```bash
-# Usage: ./graph_generator.sh <num_nodes> <filename>
-./graph_generator.sh 20000 graph.txt
+
+# To generate graphs (cluster/remote):
+./hpc_tools.sh generate-graphs
+
+# To generate graphs (local):
+./hpc_tools_local.sh generate-graphs
 
 ```
 
 ### 3. Run Locally
 
 ```bash
-# Usage: mpirun -np <procs> src/new_main.o <nodes> <graph_file>
-mpirun -np 4 src/new_main.o 20000 graph.txt
+
+# To benchmark (cluster/remote):
+./hpc_tools.sh benchmark
+
+# To benchmark (local):
+./hpc_tools_local.sh benchmark
+
+# To compare implementations (cluster/remote):
+./hpc_tools.sh compare
+
+# To compare implementations (local):
+./hpc_tools_local.sh compare
 
 ```
 
@@ -124,38 +140,22 @@ Designed for PBS/Torque clusters (e.g., typically found in HPC environments).
 
 | Command | Description |
 | --- | --- |
-| `make submit` | Submit the job defined in `scripts/submit_job.pbs` |
-| `make monitor` | Check queue status (`qstat`) |
-| `make watch-output` | Live tail of the output log |
-| `make cancel` | Cancel all user jobs |
+| `./hpc_tools.sh pbs-job serial|parallel|graph-gen` | Print a PBS job script for the given type |
 
-**Configuration (`submit_job.pbs`):**
+
+**PBS job script generation example:**
 
 ```bash
-#PBS -l select=2:ncpus=8:mem=4gb
-#PBS -l walltime=00:10:00
-#PBS -q short_cpuQ
-
+# Print a PBS script for a parallel job:
+./hpc_tools.sh pbs-job parallel > submit_parallel.pbs
 ```
 
 ---
 
+
 ## 📊 Analysis & Benchmarking
 
-The project includes scripts to compare Strong and Weak scaling.
-
-**Run Comparison:**
-
-```bash
-./scripts/compare_mpi_implementations.sh
-
-```
-
-This script executes both `main.o` and `new_main.o` against the same dataset and reports:
-
-1. Computation Time (CPU time excluding setup)
-2. Total Wall Time (End-to-end execution)
-3. Total MST Weight (Verification)
+Use the `compare` command in the unified scripts to compare implementations and collect results. You can further analyze output logs or results as needed.
 
 ---
 

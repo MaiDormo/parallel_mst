@@ -7,7 +7,6 @@
 #   generate-graphs        Generate graphs for all sizes/densities
 #   benchmark              Run all benchmarks (serial and parallel)
 #   compare                Compare implementations
-#   pbs-job <type> [...]   Submit PBS job (type: serial|parallel|graph-gen)
 
 set -e
 
@@ -68,58 +67,3 @@ function compare() {
         echo "Parallel: weight=$parallel_weight, time=$parallel_time"
     done
 }
-
-function pbs_job() {
-    type=$1
-    shift
-    case $type in
-        serial)
-            cat <<EOF
-#!/bin/bash
-#PBS -l select=1:ncpus=1:mem=16gb
-#PBS -l walltime=0:05:00
-#PBS -q short_cpuQ
-$PROJECT_DIR/serial.o "\$@"
-EOF
-            ;;
-        parallel)
-            cat <<EOF
-#!/bin/bash
-#PBS -l select=2:ncpus=64:mem=256gb
-#PBS -l place=scatter
-#PBS -l walltime=1:00:00
-#PBS -q short_cpuQ
-module load mpich-3.2
-export OMP_NUM_THREADS=8
-export OMP_PROC_BIND=true
-export OMP_PLACES=cores
-mpirun.actual -n 16 -ppn 8 $SRC_DIR/main.o "\$@"
-EOF
-            ;;
-        graph-gen)
-            cat <<EOF
-#!/bin/bash
-#PBS -l select=1:ncpus=4:mem=8gb
-#PBS -l walltime=0:10:00
-#PBS -q short_cpuQ
-$PROJECT_DIR/graph_generator "\$@"
-EOF
-            ;;
-        *)
-            echo "Unknown PBS job type: $type" >&2
-            exit 1
-            ;;
-    esac
-}
-
-case "$1" in
-    compile) compile_all ;;
-    generate-graphs) generate_graphs ;;
-    benchmark) benchmark ;;
-    compare) compare ;;
-    pbs-job) shift; pbs_job "$@" ;;
-    *)
-        echo "Usage: $0 <compile|generate-graphs|benchmark|compare|pbs-job> [args]"
-        exit 1
-        ;;
-esac

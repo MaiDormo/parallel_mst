@@ -109,11 +109,16 @@ static inline void set_edge(uint16_t* matrix, int row, int col, uint16_t val) {
     matrix[row * NODE_COUNT + col] = val;
 }
 
+static inline uint16_t get_edge(uint16_t* matrix, int row, int col) {
+    return matrix[row * NODE_COUNT + col];
+}
+
 // ---------------------------------------------------------------------------
 // High Performance I/O
 // ---------------------------------------------------------------------------
 static inline int fast_atoi(const char **str) {
     int val = 0;
+    // Skip non-digit characters (including newlines, spaces)
     while (**str < '0' || **str > '9') (*str)++; 
     while (**str >= '0' && **str <= '9') {
         val = (val * 10) + (**str - '0');
@@ -167,14 +172,13 @@ uint16_t* readGraphFast(const char* filename) {
 // ---------------------------------------------------------------------------
 
 void find_local_minimum_edges(int vertex_per_process, uint16_t* graph, int* lightest_edges) {
-    // FIX 1: Schedule static avoids atomic overhead
     #pragma omp parallel for schedule(static)
     for (int i = MY_NODES_FROM; i < MY_NODES_TO; i++) {
         uint16_t local_min_weight = MAX_EDGE_VALUE;
         int local_min_id = -1;
         const uint16_t* row_ptr = &graph[i * NODE_COUNT];
 
-        // FIX 2: Pure SIMD scan first (branchless)
+        // Pure SIMD scan
         #pragma omp simd reduction(min:local_min_weight)
         for (int j = 0; j < NODE_COUNT; j++) {
             if (i == j) continue;
@@ -203,9 +207,7 @@ void find_min_components(int* parent, uint16_t* graph, Edge* min_edges) {
     #pragma omp parallel for schedule(static)
     for (int i = MY_NODES_FROM; i < MY_NODES_TO; i++) {
         int root_i = parent[i]; 
-        
-        // Get pointer to the row. 
-        // We cast to non-const because we WILL modify it to prune edges.
+        // Cast to non-const for pruning
         uint16_t* row_ptr = &graph[i * NODE_COUNT];
 
         uint16_t best_w = MAX_EDGE_VALUE;
@@ -213,25 +215,17 @@ void find_min_components(int* parent, uint16_t* graph, Edge* min_edges) {
 
         for (int j = 0; j < NODE_COUNT; j++) {
             uint16_t w = row_ptr[j];
-            
-            // 1. Standard Skip
             if (w == MAX_EDGE_VALUE) continue;
 
-            // 2. Optimization: Only check component if weight beats our current best
             if (w < best_w) {
-                
-                // 3. The Expensive Check (Random Memory Access)
-                // We use 'parent' directly because we flattened trees earlier
+                // Check component (O(1) due to flattening)
                 if (root_i == parent[j]) {
-                    
-                    // --- PRUNING HAPPENS HERE ---
-                    // This edge connects two nodes in the same component.
-                    // It is useless forever. Mark it as MAX so we never 
-                    // check 'parent[j]' for this edge again.
-                    row_ptr[j] = MAX_EDGE_VALUE; 
-                    
+                    // --- OPTIMIZATION: PRUNING ---
+                    // This edge is internal to the component. 
+                    // Mark it as MAX so we never scan it again.
+                    // This destroys the original graph data, but speeds up next iters.
+                    row_ptr[j] = MAX_EDGE_VALUE;
                 } else {
-                    // Valid edge to a different component
                     best_w = w;
                     best_to = j;
                 }
@@ -300,10 +294,9 @@ int main(int argc, char** argv) {
     if (size < INT_MAX) {
         MPI_Bcast(graph, NODE_COUNT * NODE_COUNT, MPI_UINT16_T, 0, MPI_COMM_WORLD);
     } else {
-        // Chunked fallback for huge graphs
         size_t sent = 0;
         int chunk = 1024 * 1024 * 512; 
-        while(sent < size/2) { // size/2 because uint16 is 2 bytes
+        while(sent < size/2) {
              int c = (size/2 - sent > chunk) ? chunk : (size/2 - sent);
              MPI_Bcast(graph + sent, c, MPI_UINT16_T, 0, MPI_COMM_WORLD);
              sent += c;
@@ -319,10 +312,10 @@ int main(int argc, char** argv) {
 
     int* parent = malloc(NODE_COUNT * sizeof(int));
     int* rank = calloc(NODE_COUNT, sizeof(int));
+    // min_graph will store the WEIGHTS of the MST edges, not just 1/0 flags.
     uint16_t* min_graph = calloc(NODE_COUNT * NODE_COUNT, sizeof(uint16_t));
     init_union_find(parent, rank, NODE_COUNT);
     
-    // Wait for all nodes to be ready before starting timer
     MPI_Barrier(MPI_COMM_WORLD);
     double start_compute = MPI_Wtime();
 
@@ -330,29 +323,29 @@ int main(int argc, char** argv) {
     // Algorithm Start
     // ---------------------------------------------------------
     
-    // Iteration 1: Nearest Neighbor (Every node is a component)
+    // Iteration 1: Nearest Neighbor
     int* local_mins = malloc(v_per_proc * sizeof(int));
     int* global_mins = malloc(NODE_COUNT * sizeof(int));
     
     find_local_minimum_edges(v_per_proc, graph, local_mins);
 
-    // Manual Allgatherv via Reduce (Simple & Fast for 1D array)
     int* temp_buf = malloc(NODE_COUNT * sizeof(int));
     for(int i=0; i<NODE_COUNT; i++) temp_buf[i] = -1;
     memcpy(&temp_buf[MY_NODES_FROM], local_mins, v_per_proc * sizeof(int));
     
-    for(int i=0; i<NODE_COUNT; i++) global_mins[i] = -1; // reset recv buf
+    for(int i=0; i<NODE_COUNT; i++) global_mins[i] = -1;
     MPI_Allreduce(temp_buf, global_mins, NODE_COUNT, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     free(temp_buf);
 
     #pragma omp parallel for schedule(static)
     for (int i = 0; i < NODE_COUNT; i++) {
         if (global_mins[i] != -1) {
-            set_edge(min_graph, i, global_mins[i], 1);
-            set_edge(min_graph, global_mins[i], i, 1);
+            // FIX: Store the actual weight before pruning happens!
+            uint16_t w = get_edge(graph, i, global_mins[i]);
+            set_edge(min_graph, i, global_mins[i], w);
+            set_edge(min_graph, global_mins[i], i, w);
         }
     }
-    // Serial union is fast enough for Iter 1
     for(int i=0; i<NODE_COUNT; i++) if(global_mins[i] != -1) union_sets(parent, rank, i, global_mins[i]);
 
     // Subsequent Iterations
@@ -361,15 +354,12 @@ int main(int argc, char** argv) {
     Edge* my_node_edges = malloc(v_per_proc * sizeof(Edge));
 
     while (true) {
-        // Flatten trees to make lookups O(1) in the parallel loop
         flatten_trees(parent, NODE_COUNT);
 
         int comps = 0;
-        // Count components (could be optimized, but fast enough)
         for(int i=0; i<NODE_COUNT; i++) if(parent[i] == i) comps++;
         if(comps <= 1) break;
 
-        // Reset buffers
         for(int i=0; i<NODE_COUNT; i++) {
             local_comp_edges[i] = (Edge){MAX_EDGE_VALUE, -1, -1};
             global_comp_edges[i] = (Edge){MAX_EDGE_VALUE, -1, -1};
@@ -377,10 +367,8 @@ int main(int argc, char** argv) {
 
         find_min_components(parent, graph, my_node_edges);
 
-        // Local Reduction
         for(int i=0; i < v_per_proc; i++) {
             if (my_node_edges[i].weight != MAX_EDGE_VALUE) {
-                // parent[x] is guaranteed to be root due to flatten_trees
                 int root = parent[MY_NODES_FROM + i];
                 if (my_node_edges[i].weight < local_comp_edges[root].weight) {
                     local_comp_edges[root] = my_node_edges[i];
@@ -398,8 +386,9 @@ int main(int argc, char** argv) {
                 int root2 = find(parent, e.to);
                 if (root1 != root2) {
                     union_sets(parent, rank, root1, root2);
-                    set_edge(min_graph, e.from, e.to, 1);
-                    set_edge(min_graph, e.to, e.from, 1);
+                    // FIX: Store the weight provided by the reduction
+                    set_edge(min_graph, e.from, e.to, e.weight);
+                    set_edge(min_graph, e.to, e.from, e.weight);
                     any_merge = true;
                 }
             }
@@ -413,9 +402,12 @@ int main(int argc, char** argv) {
     if (mpi.world_rank == 0) {
         double end_compute = MPI_Wtime();
         long weight = 0;
+        // Verify using the weights stored in min_graph, ignoring the corrupted 'graph'
         for(int i=0; i<NODE_COUNT; i++) {
             for(int j=0; j<i; j++) {
-                if(min_graph[i*NODE_COUNT + j]) weight += graph[i*NODE_COUNT + j];
+                // Sum valid weights (non-zero)
+                // Note: If valid edge weight is 0, it doesn't affect sum anyway.
+                weight += get_edge(min_graph, i, j);
             }
         }
         printf("Computation Time: %f\n", end_compute - start_compute);

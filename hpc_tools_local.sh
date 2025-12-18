@@ -25,7 +25,7 @@ function compile_all() {
 
 function generate_graphs() {
     mkdir -p "$PROJECT_DIR/graphs"
-    VERTICES=(1000 1500 2000 5000 10000 20000 40000 80000)
+    VERTICES=(1000 1500 2000 5000 10000 20000 40000)
     for v in "${VERTICES[@]}"; do
         sparse_edges=$((v * 2))
         medium_edges=$((v * $(echo "l($v)/l(2)" | bc -l | cut -d'.' -f1)))
@@ -39,7 +39,13 @@ function generate_graphs() {
 }
 
 function benchmark() {
-    for graph in "$PROJECT_DIR/graphs/graph_*_*.txt"; do
+    shopt -s nullglob
+    graphs=("$PROJECT_DIR"/graphs/graph_*_*.txt)
+    if [ ${#graphs[@]} -eq 0 ]; then
+        echo "No graph files found in $PROJECT_DIR/graphs/"
+        exit 1
+    fi
+    for graph in "${graphs[@]}"; do
         num_vertices=$(head -n 1 "$graph" | cut -d' ' -f1)
         echo "============================================"
         echo "Testing $graph..."
@@ -48,10 +54,17 @@ function benchmark() {
         echo "Running parallel implementation..."
         mpirun -np 2 --bind-to none -x OMP_NUM_THREADS=4 "$SRC_DIR/main.o" "$num_vertices" "$graph"
     done
+    shopt -u nullglob
 }
 
 function compare() {
-    for graph in "$PROJECT_DIR/graphs/graph_*_*.txt"; do
+    shopt -s nullglob
+    graphs=("$PROJECT_DIR"/graphs/graph_*_*.txt)
+    if [ ${#graphs[@]} -eq 0 ]; then
+        echo "No graph files found in $PROJECT_DIR/graphs/"
+        exit 1
+    fi
+    for graph in "${graphs[@]}"; do
         num_vertices=$(head -n 1 "$graph" | cut -d' ' -f1)
         echo "============================================"
         echo "Testing $graph..."
@@ -60,12 +73,13 @@ function compare() {
         serial_weight=$(echo "$serial_output" | grep "MST Weight:" | head -n1 | grep -o '[0-9]\+')
         serial_time=$(echo "$serial_output" | grep "Computation Time:" | head -n1 | grep -o '[0-9.]*')
         echo "Running parallel implementation..."
-        parallel_output=$(mpirun -np 2 --bind-to none -x OMP_NUM_THREADS=4 "$SRC_DIR/main.o" "$num_vertices" "$graph")
+        parallel_output=$(mpirun -np 4 "$SRC_DIR/main.o" "$num_vertices" "$graph")
         parallel_weight=$(echo "$parallel_output" | grep "MST Weight:" | head -n1 | grep -o '[0-9]\+')
         parallel_time=$(echo "$parallel_output" | grep "Computation Time:" | head -n1 | grep -o '[0-9.]*')
         echo "Serial: weight=$serial_weight, time=$serial_time"
         echo "Parallel: weight=$parallel_weight, time=$parallel_time"
     done
+    shopt -u nullglob
 }
 
 case "$1" in
